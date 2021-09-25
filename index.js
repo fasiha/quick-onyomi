@@ -2,13 +2,21 @@ var fs = require('fs');
 var s = fs.readFileSync('kanjidic2.xml', 'utf8');
 var vs = s.split('<character>').filter(s => s.includes('ja_on') && s.includes('<literal>'));
 var onToKanji = new Map();
+var kanjiToGrade = new Map();
 
 for (const s of vs) {
-  const match = s.match(/<literal>(.+)<\/literal>/);
+  let match = s.match(/<literal>(.+)<\/literal>/);
   if (!match) {
     continue;
   }
   const literal = match[1];
+  match = s.match(/<grade>(.+)<\/grade>/);
+  if (match) {
+    const grade = +(match[1]);
+    kanjiToGrade.set(literal, grade);
+  } else {
+    kanjiToGrade.set(literal, 13);
+  }
   const ons = Array.from(s.matchAll(/<reading r_type="ja_on">(.+)<\/reading>/g), o => o[1]);
   for (const on of ons) {
     if (onToKanji.has(on)) {
@@ -32,44 +40,16 @@ function groupBy(f, v) {
   return ret;
 }
 
-var levelToKanjis = JSON.parse(fs.readFileSync('kanken.json', 'utf8'));
-var kanjis = new Set(Object.values(levelToKanjis).join('').split(''))
-var kanjiToLevel = new Map();
-for (const l of Object.keys(levelToKanjis)) {
-  const kanjis = levelToKanjis[l];
-  const level = +l;
-  for (const k of kanjis) {
-    if (kanjiToLevel.has(k)) {
-      throw new Error('what ' + k);
-    }
-    kanjiToLevel.set(k, level);
-  }
-}
+var p = Array.from(onToKanji, ([k, v]) => [k, Array.from(v)]);
+p.sort((a, b) => a[1].length < b[1].length ? 1 : a[1].length === b[1].length ? 0 : -1);
 
-var p = Array
-            .from(onToKanji,
-                  ([on, ks]) => {
-                    ks = Array.from(ks).filter(s => kanjis.has(s));
-                    const groups = Array.from(groupBy(s => kanjiToLevel.get(s), ks));
-                    groups.sort((a, b) => a[0] < b[0] ? 1 : -1);
-                    return [on, groups, ks];
-                  })
-            .filter(([_, _2, ks]) => ks.length > 0);
-p.sort((a, b) => a[2].length < b[2].length ? 1 : a[2].length === b[2].length ? 0 : -1);
-
-var sections = p.map(([on, gs, ks]) => {
+var sections = p.map(([on, ks]) => {
   const header = `# ${on} (${ks.length})`;
-  const subsections = gs.map(([grade, ks]) => {
-    let header = `## Kanken ${grade}`;
-    if (grade >= 5) {
-      header += `=${10 - grade + 1}年`;
-    } else if (grade === 0) {
-      header += `=人名用`
-    }
-    header += ` (${ks.length})`;
-    return header + '\n' + ks.join('');
-  });
-  return `${header}\n${subsections.join('\n')}`
-})
+  const gradeToKanjis = Array.from(groupBy(k => kanjiToGrade.get(k), ks));
+  gradeToKanjis.sort((a, b) => a[0] < b[0] ? -1 : 1);
+  const sections = gradeToKanjis.map(
+      ([grade, kanjis]) => `## Grade ${grade === 13 ? 'X' : grade} (${kanjis.length})\n${kanjis.join('')}`);
+  return `${header}\n${sections.join('\n')}`
+});
 
 fs.writeFileSync('README.md', sections.join('\n\n'));
